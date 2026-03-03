@@ -1,18 +1,33 @@
-from flask import Flask, render_template_string, request, redirect
+from flask import Flask, render_template, request, redirect
 import sqlite3
 from datetime import datetime
+import os
 
 app = Flask(__name__)
 
-# ================= BANCO =================
+# =========================
+# BANCO DE DADOS
+# =========================
+
+def conectar():
+    return sqlite3.connect("aba_web.db")
+
 
 def init_db():
-    conn = sqlite3.connect("aba_web.db")
+    conn = conectar()
     cursor = conn.cursor()
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS alunos (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nome TEXT NOT NULL
+    )
+    """)
 
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS sessoes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        aluno_id INTEGER,
         data TEXT
     )
     """)
@@ -28,74 +43,131 @@ def init_db():
     conn.commit()
     conn.close()
 
+
 init_db()
 
-# ================= INTERFACE =================
+# =========================
+# DASHBOARD
+# =========================
 
-HTML = """
-<!DOCTYPE html>
-<html>
-<head>
-<title>Sistema ABA Web</title>
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<style>
-body { font-family: Arial; background:#121212; color:white; text-align:center; }
-button { width:90%%; padding:15px; margin:5px; font-size:18px; border-radius:10px; border:none; }
-.ind { background:#2ecc71; }
-.verbal { background:#3498db; }
-.gestual { background:#9b59b6; }
-.fparcial { background:#f1c40f; color:black; }
-.ftotal { background:#e67e22; }
-.erro { background:#e74c3c; }
-.omissao { background:#7f8c8d; }
-</style>
-</head>
-<body>
-
-<h2>Sistema ABA - Registro</h2>
-
-<h3>Total: {{total}}</h3>
-<h3>% Independente: {{percent}}%%</h3>
-
-<form method="post">
-<button name="tipo" value="Independente" class="ind">Independente</button>
-<button name="tipo" value="Ajuda Verbal" class="verbal">Ajuda Verbal</button>
-<button name="tipo" value="Ajuda Gestual" class="gestual">Ajuda Gestual</button>
-<button name="tipo" value="Ajuda Física Parcial" class="fparcial">Ajuda Física Parcial</button>
-<button name="tipo" value="Ajuda Física Total" class="ftotal">Ajuda Física Total</button>
-<button name="tipo" value="Erro" class="erro">Erro</button>
-<button name="tipo" value="Omissão" class="omissao">Omissão</button>
-</form>
-
-<br>
-<a href="/nova">Nova Sessão</a>
-
-</body>
-</html>
-"""
-
-sessao_atual = None
-
-@app.route("/", methods=["GET", "POST"])
-def index():
-    global sessao_atual
-
-    conn = sqlite3.connect("aba_web.db")
+@app.route("/")
+def dashboard():
+    conn = conectar()
     cursor = conn.cursor()
 
-    if not sessao_atual:
-        data = datetime.now().strftime("%d/%m/%Y %H:%M")
-        cursor.execute("INSERT INTO sessoes (data) VALUES (?)", (data,))
+    cursor.execute("SELECT COUNT(*) FROM alunos")
+    total_alunos = cursor.fetchone()[0]
+
+    cursor.execute("SELECT COUNT(*) FROM sessoes")
+    total_sessoes = cursor.fetchone()[0]
+
+    cursor.execute("SELECT tipo FROM tentativas")
+    dados = cursor.fetchall()
+
+    total = len(dados)
+    independentes = len([d for d in dados if d[0] == "Independente"])
+    media_indep = round((independentes/total*100),1) if total>0 else 0
+
+    conn.close()
+
+    return render_template("dashboard.html",
+                           total_alunos=total_alunos,
+                           total_sessoes=total_sessoes,
+                           media_indep=media_indep)
+
+# =========================
+# CADASTRO DE ALUNOS
+# =========================
+
+@app.route("/alunos", methods=["GET", "POST"])
+def alunos():
+    conn = conectar()
+    cursor = conn.cursor()
+
+    if request.method == "POST":
+        nome = request.form["nome"]
+        cursor.execute("INSERT INTO alunos (nome) VALUES (?)", (nome,))
         conn.commit()
-        sessao_atual = cursor.lastrowid
+
+    cursor.execute("SELECT * FROM alunos")
+    lista = cursor.fetchall()
+
+    conn.close()
+
+    return render_template_string("""
+    {% extends "base.html" %}
+    {% block content %}
+    <h2>Alunos</h2>
+
+    <form method="post" class="mb-3">
+        <input name="nome" class="form-control mb-2" placeholder="Nome do aluno" required>
+        <button class="btn btn-primary">Cadastrar</button>
+    </form>
+
+    <ul class="list-group">
+        {% for aluno in lista %}
+        <li class="list-group-item">{{ aluno[1] }}</li>
+        {% endfor %}
+    </ul>
+
+    {% endblock %}
+    """, lista=lista)
+
+# =========================
+# NOVA SESSÃO
+# =========================
+
+@app.route("/nova_sessao", methods=["GET", "POST"])
+def nova_sessao():
+    conn = conectar()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT * FROM alunos")
+    alunos = cursor.fetchall()
+
+    if request.method == "POST":
+        aluno_id = request.form["aluno"]
+        data = datetime.now().strftime("%d/%m/%Y %H:%M")
+        cursor.execute("INSERT INTO sessoes (aluno_id, data) VALUES (?,?)", (aluno_id, data))
+        conn.commit()
+        sessao_id = cursor.lastrowid
+        conn.close()
+        return redirect(f"/sessao/{sessao_id}")
+
+    conn.close()
+
+    return render_template_string("""
+    {% extends "base.html" %}
+    {% block content %}
+    <h2>Nova Sessão</h2>
+
+    <form method="post">
+        <select name="aluno" class="form-control mb-3" required>
+            {% for aluno in alunos %}
+            <option value="{{ aluno[0] }}">{{ aluno[1] }}</option>
+            {% endfor %}
+        </select>
+        <button class="btn btn-success">Iniciar Sessão</button>
+    </form>
+
+    {% endblock %}
+    """, alunos=alunos)
+
+# =========================
+# REGISTRO DE TENTATIVAS
+# =========================
+
+@app.route("/sessao/<int:id>", methods=["GET", "POST"])
+def sessao(id):
+    conn = conectar()
+    cursor = conn.cursor()
 
     if request.method == "POST":
         tipo = request.form["tipo"]
-        cursor.execute("INSERT INTO tentativas (sessao_id, tipo) VALUES (?,?)",
-                       (sessao_atual, tipo))
+        cursor.execute("INSERT INTO tentativas (sessao_id, tipo) VALUES (?,?)", (id, tipo))
         conn.commit()
 
-    cursor.execute("SELECT tipo FROM tentativas WHERE sessao_id=?", (sessao_atual,))
+    cursor.execute("SELECT tipo FROM tentativas WHERE sessao_id=?", (id,))
     dados = cursor.fetchall()
 
     total = len(dados)
@@ -104,13 +176,30 @@ def index():
 
     conn.close()
 
-    return render_template_string(HTML, total=total, percent=percent)
+    return render_template_string("""
+    {% extends "base.html" %}
+    {% block content %}
 
-@app.route("/nova")
-def nova():
-    global sessao_atual
-    sessao_atual = None
-    return redirect("/")
+    <h2>Registro de Sessão</h2>
+
+    <h4>Total: {{total}}</h4>
+    <h4>% Independente: {{percent}}%</h4>
+
+    <form method="post" class="d-grid gap-2">
+        <button name="tipo" value="Independente" class="btn btn-success">Independente</button>
+        <button name="tipo" value="Ajuda Verbal" class="btn btn-primary">Ajuda Verbal</button>
+        <button name="tipo" value="Ajuda Gestual" class="btn btn-warning">Ajuda Gestual</button>
+        <button name="tipo" value="Ajuda Física Parcial" class="btn btn-info">Ajuda Física Parcial</button>
+        <button name="tipo" value="Ajuda Física Total" class="btn btn-dark">Ajuda Física Total</button>
+        <button name="tipo" value="Erro" class="btn btn-danger">Erro</button>
+        <button name="tipo" value="Omissão" class="btn btn-secondary">Omissão</button>
+    </form>
+
+    {% endblock %}
+    """, total=total, percent=percent)
+
+# =========================
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
