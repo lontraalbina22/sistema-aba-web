@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<h2>Histórico de Sessões</h2>
+
+<table class="table table-striped">
+    <thead>
+        <tr>
+            <th>Aluno</th>
+            <th>Data</th>
+            <th>Total</th>
+            <th>% Independente</th>
+            <th>Abrir</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for s in sessoes %}
+        <tr>
+           <td>
+    <a href="{{ url_for('ver_aluno', aluno_id=s.aluno_id) }}">
+        {{ s.nome }}
+    </a>
+</td>
+            <td>{{ s.data }}</td>
+            <td>{{ s.total }}</td>
+            <td>{{ s.percent }}%</td>
+            <td>
+                <a href="/sessao/{{ s.id }}" class="btn btn-sm btn-primary">
+                    Abrir
+                </a>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+{% endblock %}

@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<h2>{{ aluno }}</h2>
+
+<canvas id="grafico"></canvas>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<script>
+const dados = {{ dados | tojson }};
+
+const labels = dados.map(d => d.data);
+const valores = dados.map(d => d.percent);
+
+new Chart(document.getElementById("grafico"), {
+    type: "line",
+    data: {
+        labels: labels,
+        datasets: [{
+            label: "% Independência",
+            data: valores,
+            borderWidth: 2,
+            fill: false
+        }]
+    },
+    options: {
+        scales: {
+            y: {
+                min: 0,
+                max: 100
+            }
+        }
+    }
+});
+</script>
+
+{% endblock %}
